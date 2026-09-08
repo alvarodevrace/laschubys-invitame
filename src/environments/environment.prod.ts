@@ -6,4 +6,6 @@ export const environment = {
   production: true,
   apiUrl: 'https://api.laschubys.com/api',
   siteUrl: 'https://invitame.laschubys.com',
+  // Pre-launch mode: true shows the "En construcción" screen instead of the app.
+  underConstruction: true,
 };
