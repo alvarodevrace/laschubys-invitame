@@ -80,6 +80,7 @@
 
   --animate-marquee: marquee 20s linear infinite;
   --animate-slide-up: slideUp 0.35s var(--ease-smooth);
+  --animate-panel-in: panelSlideIn 0.4s var(--ease-smooth) 0.12s both;
   --animate-wiggle: wiggle 0.5s ease-in-out;
   --animate-bounce-in: bounceIn 0.5s var(--ease-bounce);
   --animate-float: float 3s ease-in-out infinite;
@@ -164,6 +165,19 @@
   }
   80% {
     transform: rotate(2deg);
+  }
+}
+
+/* Collaboration panel enters from the right, choreographed with the tier card FLIP.
+   `both` fill keeps it at opacity 0 during the delay so it fades in on landing. */
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
 }
 
