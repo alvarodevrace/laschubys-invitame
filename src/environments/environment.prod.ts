@@ -1,9 +1,9 @@
 /**
  * Production environment.
- * TODO(Sprint 2): replace siteUrl with the real subdomain once deployed.
+ * The app lives on its own subdomain; the API is served by the shared BFF.
  */
 export const environment = {
   production: true,
-  apiUrl: '/api',
+  apiUrl: 'https://api.laschubys.com/api',
   siteUrl: 'https://invitame.laschubys.com',
 };
