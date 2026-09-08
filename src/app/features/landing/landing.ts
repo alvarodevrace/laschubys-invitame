@@ -1,4 +1,17 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import {
+  afterNextRender,
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  ElementRef,
+  inject,
+  Injector,
+  PLATFORM_ID,
+  runInInjectionContext,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArrowRight,
@@ -16,7 +29,7 @@ import {
   TextRevealDirective,
 } from '../../shared/animations';
 import { WallComponent } from './components/wall';
-import { CollaborationModalComponent } from './components/collaboration-modal';
+import { CollaborationPanelComponent } from './components/collaboration-panel';
 
 const TIER_LIST: readonly Tier[] = [
   {
@@ -52,7 +65,7 @@ const TIER_LIST: readonly Tier[] = [
   imports: [
     NgIcon,
     WallComponent,
-    CollaborationModalComponent,
+    CollaborationPanelComponent,
     ScrollRevealDirective,
     TextRevealDirective,
     StaggerChildrenDirective,
@@ -152,16 +165,26 @@ const TIER_LIST: readonly Tier[] = [
         </div>
 
         <div
-          class="grid grid-cols-1 md:grid-cols-3 gap-6"
+          #tiersGrid
+          [class]="
+            selectedTier()
+              ? 'grid grid-cols-1 md:grid-cols-2 gap-6'
+              : 'grid grid-cols-1 md:grid-cols-3 gap-6'
+          "
           appStaggerChildren
           childSelector="article"
           [staggerDelay]="0.1"
           [y]="30"
           [duration]="0.5"
         >
-          @for (tier of tiers; track tier.key) {
+          @for (tier of visibleTiers(); track tier.key) {
             <article
+              [attr.data-tier-key]="tier.key"
               class="group relative block h-full rounded-[2.5rem] overflow-hidden transition-all duration-500 ease-bounce hover:-translate-y-3 hover:scale-[1.02] hover:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.2)]"
+              [class.ring-4]="isSelected(tier)"
+              [class.ring-offset-2]="isSelected(tier)"
+              [class.ring-offset-white]="isSelected(tier)"
+              [style.--tw-ring-color]="tierColor(tier.key).accent"
               [style.background]="tierColor(tier.key).light"
             >
               <div class="relative aspect-[4/3] overflow-hidden">
@@ -189,13 +212,17 @@ const TIER_LIST: readonly Tier[] = [
                 </p>
                 <button
                   type="button"
-                  (click)="openModal(tier)"
+                  (click)="selectTier(tier, $event)"
                   class="mt-4 w-full rounded-full bg-primary text-primary-foreground py-3 font-bold text-lg transition-all ease-bounce hover:bg-primary/80 active:translate-y-[2px]"
                 >
                   Colaborar
                 </button>
               </div>
             </article>
+          }
+
+          @if (selectedTier(); as tier) {
+            <app-collaboration-panel [tier]="tier" (cancelled)="clearSelection()" />
           }
         </div>
       </div>
@@ -222,13 +249,6 @@ const TIER_LIST: readonly Tier[] = [
       </div>
     </section>
 
-    <!-- Collaboration modal -->
-    @if (selectedTier()) {
-      <app-collaboration-modal
-        [tier]="selectedTier()!"
-        (closed)="closeModal()"
-      />
-    }
   `,
 })
 export class LandingComponent {
@@ -238,11 +258,117 @@ export class LandingComponent {
 
   protected readonly selectedTier = signal<Tier | null>(null);
 
-  protected openModal(tier: Tier): void {
-    this.selectedTier.set(tier);
+  /** Tiers shown in the grid: all by default, or only the selected one inline. */
+  protected readonly visibleTiers = computed(() => {
+    const selected = this.selectedTier();
+    return selected ? [selected] : this.tiers;
+  });
+
+  private readonly platformId = inject(PLATFORM_ID);
+  private readonly injector = inject(Injector);
+  private readonly gridEl = viewChild<ElementRef<HTMLElement>>('tiersGrid');
+
+  /** The card currently animating (FLIP / slide-in), so it can be cancelled cleanly. */
+  private activeCard: HTMLElement | null = null;
+  private onTransitionEnd?: () => void;
+  private flipTimeout?: ReturnType<typeof setTimeout>;
+
+  protected isSelected(tier: Tier): boolean {
+    return this.selectedTier()?.key === tier.key;
   }
 
-  protected closeModal(): void {
+  protected selectTier(tier: Tier, event?: Event): void {
+    if (this.selectedTier()?.key === tier.key) return;
+    // F(irst): capture the clicked card's original rect BEFORE the layout changes.
+    const card = event ? ((event.target as Element).closest('article') as HTMLElement | null) : null;
+    const firstRect = card?.getBoundingClientRect() ?? null;
+    this.selectedTier.set(tier);
+    if (!isPlatformBrowser(this.platformId)) return;
+    // L(ast): measure the card after the DOM re-renders, then invert + play.
+    // afterNextRender must run in an injection context, so wrap it for event handlers.
+    runInInjectionContext(this.injector, () => {
+      afterNextRender(() => this.animateTierIn(tier.key, firstRect));
+    });
+  }
+
+  protected clearSelection(): void {
+    // Graceful reset: clear any in-flight transform BEFORE the 3-card row re-renders.
+    this.clearActiveCard();
     this.selectedTier.set(null);
+  }
+
+  private animateTierIn(key: string, firstRect: DOMRect | null): void {
+    const card = this.findCard(key);
+    if (!card) return;
+    if (this.prefersReducedMotion()) return; // card is already at its final slot
+    if (!firstRect) {
+      this.slideInFromRight(card);
+      return;
+    }
+    const lastRect = card.getBoundingClientRect();
+    const dx = firstRect.left - lastRect.left;
+    const dy = firstRect.top - lastRect.top;
+    const sw = lastRect.width ? firstRect.width / lastRect.width : 1;
+    const sh = lastRect.height ? firstRect.height / lastRect.height : 1;
+
+    this.setActiveCard(card);
+    // I(nvert): place the card exactly where it started, with no transition.
+    card.style.transition = 'none';
+    card.style.willChange = 'transform';
+    card.style.transform = `translate(${dx}px, ${dy}px) scale(${sw}, ${sh})`;
+    // Force reflow so the inverted state is painted before the transition starts.
+    void card.offsetWidth;
+    // P(lay): springy slide into the new slot.
+    card.style.transition = 'transform 500ms var(--ease-bounce)';
+    card.style.transform = 'translate(0px, 0px) scale(1, 1)';
+    this.flipTimeout = setTimeout(() => this.clearActiveCard(), 620);
+  }
+
+  /** Fallback when we have no first rect (no click event): slide in from the right. */
+  private slideInFromRight(card: HTMLElement): void {
+    this.setActiveCard(card);
+    card.style.transition = 'none';
+    card.style.willChange = 'transform, opacity';
+    card.style.opacity = '0';
+    card.style.transform = 'translateX(120%)';
+    void card.offsetWidth;
+    card.style.transition = 'transform 500ms var(--ease-bounce), opacity 400ms var(--ease-smooth)';
+    card.style.opacity = '1';
+    card.style.transform = 'translateX(0)';
+    this.flipTimeout = setTimeout(() => this.clearActiveCard(), 620);
+  }
+
+  private findCard(key: string): HTMLElement | null {
+    return this.gridEl()?.nativeElement.querySelector<HTMLElement>(`[data-tier-key="${key}"]`) ?? null;
+  }
+
+  private setActiveCard(card: HTMLElement): void {
+    this.clearActiveCard();
+    this.activeCard = card;
+    this.onTransitionEnd = () => this.clearActiveCard();
+    card.addEventListener('transitionend', this.onTransitionEnd);
+  }
+
+  private clearActiveCard(): void {
+    if (this.flipTimeout) {
+      clearTimeout(this.flipTimeout);
+      this.flipTimeout = undefined;
+    }
+    if (this.activeCard && this.onTransitionEnd) {
+      this.activeCard.removeEventListener('transitionend', this.onTransitionEnd);
+    }
+    if (this.activeCard) {
+      const card = this.activeCard;
+      card.style.transition = '';
+      card.style.transform = '';
+      card.style.willChange = '';
+      card.style.opacity = '';
+    }
+    this.activeCard = null;
+    this.onTransitionEnd = undefined;
+  }
+
+  private prefersReducedMotion(): boolean {
+    return isPlatformBrowser(this.platformId) && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 }
