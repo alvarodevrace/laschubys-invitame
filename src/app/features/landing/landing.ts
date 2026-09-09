@@ -12,6 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArrowRight,
@@ -22,6 +23,7 @@ import {
 
 import type { Tier } from '../../core/models/donation';
 import { tierColor as tierColorFor } from '../../shared/ui/tier-visuals';
+import { clearPendingCollab, readPendingCollab } from '../../core/services/pending-collab';
 import {
   ParallaxDirective,
   ScrollRevealDirective,
@@ -81,6 +83,27 @@ const TIER_LIST: readonly Tier[] = [
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    @if (cancelled()) {
+      <div class="max-w-6xl mx-auto px-4 pt-6">
+        <div
+          role="status"
+          aria-live="polite"
+          class="flex items-center justify-between gap-4 rounded-2xl border border-border bg-white px-5 py-4 shadow-sm"
+        >
+          <p class="text-sm font-semibold text-foreground">
+            Colaboración cancelada — no se realizó ningún cobro.
+          </p>
+          <button
+            type="button"
+            (click)="dismissCancelled()"
+            class="shrink-0 rounded-full border border-border px-4 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
+    }
+
     <!-- Hero -->
     <section class="relative bg-surface overflow-hidden">
       <div class="max-w-6xl mx-auto px-4 py-16 md:py-24">
@@ -266,7 +289,39 @@ export class LandingComponent {
 
   private readonly platformId = inject(PLATFORM_ID);
   private readonly injector = inject(Injector);
+  private readonly route = inject(ActivatedRoute);
   private readonly gridEl = viewChild<ElementRef<HTMLElement>>('tiersGrid');
+
+  /** True when the user returned from PayPal via the `cancel_url` (no PayerID). */
+  protected readonly cancelled = signal(false);
+
+  constructor() {
+    afterNextRender(() => {
+      if (!isPlatformBrowser(this.platformId)) return;
+      this.handlePaypalCancel();
+    });
+  }
+
+  /**
+   * PayPal redirects to `cancel_url` (the home page) with `?token=<orderId>`
+   * and no `PayerID`. When detected, show a subtle banner and drop the pending
+   * collaboration so it can't be captured later.
+   */
+  private handlePaypalCancel(): void {
+    const token = this.route.snapshot.queryParamMap.get('token');
+    const payerId = this.route.snapshot.queryParamMap.get('PayerID');
+    if (token && !payerId) {
+      const pending = readPendingCollab();
+      if (pending && pending.orderId === token) {
+        clearPendingCollab();
+      }
+      this.cancelled.set(true);
+    }
+  }
+
+  protected dismissCancelled(): void {
+    this.cancelled.set(false);
+  }
 
   /** The card currently animating (FLIP / slide-in), so it can be cancelled cleanly. */
   private activeCard: HTMLElement | null = null;
