@@ -104,6 +104,7 @@ const MAX_MESSAGE_LENGTH = 200;
               ></span>
               Te llevamos a PayPal...
             } @else {
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-auto shrink-0" aria-hidden="true"><path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.023.143-.047.288-.077.437C19.08 11.58 15.716 13.33 11.416 13.33h-2.08c-.564 0-1.04.408-1.13.964L7.076 21.337z"/></svg>
               Colaborar
             }
           </button>
