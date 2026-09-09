@@ -1,6 +1,6 @@
 /**
  * Domain models for the collaboration ("Invítame un Churu") flow.
- * Contracts mirror the BFF `donations` module (MockGateway in Sprint 1).
+ * Contracts mirror the BFF `donations` module (PayPal gateway, Sprint 2).
  */
 
 export const TIERS = {
@@ -10,6 +10,13 @@ export const TIERS = {
 } as const;
 
 export type TierKey = (typeof TIERS)[keyof typeof TIERS];
+
+/** Amounts are fixed server-side; this map mirrors the BFF for display only. */
+export const TIER_PRICES: Record<TierKey, number> = {
+  croqueta: 5,
+  churu: 10,
+  salmon: 15,
+};
 
 export interface Tier {
   key: TierKey;
@@ -23,8 +30,10 @@ export interface CreateOrderRequest {
   tier: TierKey;
 }
 
+/** Response from `POST /api/donations/paypal/create-order`. */
 export interface CreateOrderResponse {
   orderId: string;
+  approvalUrl: string;
 }
 
 export interface CaptureRequest {
@@ -33,9 +42,23 @@ export interface CaptureRequest {
   message: string;
 }
 
+/** Response from `POST /api/donations/paypal/capture`. */
 export interface CaptureResponse {
   status: 'COMPLETED';
   donationId: string;
+}
+
+/**
+ * Pending collaboration stashed in `sessionStorage` between the create-order
+ * step and the PayPal return redirect. It carries the data needed to capture
+ * the order once the payer returns to the app.
+ */
+export interface PendingCollaboration {
+  orderId: string;
+  donorName: string;
+  message: string;
+  tier: TierKey;
+  createdAt: number;
 }
 
 export interface PublicDonation {

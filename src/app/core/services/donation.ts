@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
+import { savePendingCollab } from './pending-collab';
 import type {
   CaptureRequest,
   CaptureResponse,
@@ -27,19 +28,22 @@ function timeout(ms: number): Promise<never> {
 export class DonationService {
   private readonly http = inject(HttpClient);
 
-  /** Creates a pending order for a tier (amount is fixed server-side). */
+  /** Creates a pending PayPal order for a tier (amount is fixed server-side). */
   async createOrder(tier: TierKey): Promise<CreateOrderResponse> {
     const body: CreateOrderRequest = { tier };
     return firstValueFrom(
-      this.http.post<CreateOrderResponse>(`${environment.apiUrl}/donations/mock/create-order`, body),
+      this.http.post<CreateOrderResponse>(
+        `${environment.apiUrl}/donations/paypal/create-order`,
+        body,
+      ),
     );
   }
 
-  /** Captures the simulated payment and records the donor name + message. */
+  /** Captures an approved PayPal order and records the donor name + message. */
   async capture(orderId: string, donorName: string, message: string): Promise<CaptureResponse> {
     const body: CaptureRequest = { orderId, donorName, message };
     return firstValueFrom(
-      this.http.post<CaptureResponse>(`${environment.apiUrl}/donations/mock/capture`, body),
+      this.http.post<CaptureResponse>(`${environment.apiUrl}/donations/paypal/capture`, body),
     );
   }
 
@@ -53,16 +57,30 @@ export class DonationService {
   }
 
   /**
-   * Runs the full create-order + capture flow with a timeout and single-flight
-   * semantics (the caller is responsible for the idempotency guard).
+   * Starts the real PayPal redirect flow: creates an order, stashes the pending
+   * collaboration in `sessionStorage`, then redirects the browser to the PayPal
+   * approval page. Returns `true` once the redirect has been initiated.
+   *
+   * Browser-only (`sessionStorage` + `window.location`). The caller must wrap
+   * this in the mutation idempotency guard (button disabled while saving).
    */
-  async createCollaboration(
-    tier: TierKey,
-    donorName: string,
-    message: string,
-  ): Promise<CaptureResponse> {
+  async startPayPalFlow(tier: TierKey, donorName: string, message: string): Promise<boolean> {
     const order = await Promise.race([this.createOrder(tier), timeout(MUTATION_TIMEOUT)]);
-    return Promise.race([this.capture(order.orderId, donorName, message), timeout(MUTATION_TIMEOUT)]);
+    if (!order.approvalUrl) {
+      throw new Error('PayPal order did not return an approval URL');
+    }
+    savePendingCollab({
+      orderId: order.orderId,
+      donorName,
+      message,
+      tier,
+      createdAt: Date.now(),
+    });
+    if (typeof window === 'undefined') {
+      throw new Error('startPayPalFlow only runs in the browser');
+    }
+    window.location.href = order.approvalUrl;
+    return true;
   }
 
   /** Fetches the wall with a read timeout. */

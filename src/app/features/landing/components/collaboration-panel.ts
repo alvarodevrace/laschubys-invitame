@@ -13,7 +13,6 @@ import {
 } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
 
 import { DonationService } from '../../../core/services/donation';
 import { tierColor as tierColorFor } from '../../../shared/ui/tier-visuals';
@@ -96,9 +95,17 @@ const MAX_MESSAGE_LENGTH = 200;
           <button
             type="submit"
             [disabled]="saving()"
-            class="w-full rounded-full bg-primary text-primary-foreground py-3 font-bold text-lg transition-all ease-bounce hover:bg-primary/80 active:translate-y-[2px] active:shadow-none disabled:opacity-60"
+            class="w-full inline-flex items-center justify-center gap-2 rounded-full bg-primary text-primary-foreground py-3 font-bold text-lg transition-all ease-bounce hover:bg-primary/80 active:translate-y-[2px] active:shadow-none disabled:opacity-60"
           >
-            {{ saving() ? 'Procesando...' : 'Colaborar' }}
+            @if (saving()) {
+              <span
+                class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+                aria-hidden="true"
+              ></span>
+              Te llevamos a PayPal...
+            } @else {
+              Colaborar
+            }
           </button>
           <button
             type="button"
@@ -115,7 +122,6 @@ const MAX_MESSAGE_LENGTH = 200;
 export class CollaborationPanelComponent {
   private readonly fb = inject(FormBuilder);
   private readonly donation = inject(DonationService);
-  private readonly router = inject(Router);
   private readonly platformId = inject(PLATFORM_ID);
 
   readonly tier = input.required<Tier>();
@@ -158,11 +164,20 @@ export class CollaborationPanelComponent {
     this.error.set(null);
     try {
       const { donorName, message } = this.form.getRawValue();
-      await this.donation.createCollaboration(this.tier().key, donorName.trim(), message.trim());
-      await this.router.navigate(['/gracias']);
+      const redirected = await this.donation.startPayPalFlow(
+        this.tier().key,
+        donorName.trim(),
+        message.trim(),
+      );
+      // If the browser is navigating to PayPal, keep the button disabled until
+      // the page unloads so a double-click can't submit twice. Only reset the
+      // guard on the failure path (when the redirect was NOT initiated).
+      if (!redirected) {
+        this.error.set('No pudimos iniciar el pago con PayPal. Intenta de nuevo.');
+        this.saving.set(false);
+      }
     } catch {
-      this.error.set('No pudimos procesar tu colaboración. Intenta de nuevo.');
-    } finally {
+      this.error.set('No pudimos iniciar el pago con PayPal. Intenta de nuevo.');
       this.saving.set(false);
     }
   }
