@@ -9,8 +9,30 @@ import { join } from 'node:path';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
+const TRUSTED_FORWARDED_HEADERS: ReadonlySet<string> = new Set([
+  'x-forwarded-host',
+  'x-forwarded-proto',
+]);
+
 const app = express();
 const angularApp = new AngularNodeAppEngine();
+
+/**
+ * Angular's Node app engine only trusts `x-forwarded-host` and `x-forwarded-proto`
+ * by default. Any other `x-forwarded-*` header (Traefik also sends
+ * `x-forwarded-for`, `x-forwarded-port` and `x-forwarded-server`) makes the engine
+ * downgrade the whole request to CSR, so strip the untrusted ones before rendering.
+ */
+function stripUntrustedForwardedHeaders(req: express.Request): void {
+  for (const header of Object.keys(req.headers)) {
+    if (
+      header.startsWith('x-forwarded-') &&
+      !TRUSTED_FORWARDED_HEADERS.has(header)
+    ) {
+      delete req.headers[header];
+    }
+  }
+}
 
 /**
  * Example Express Rest API endpoints can be defined here.
@@ -39,6 +61,8 @@ app.use(
  * Handle all other requests by rendering the Angular application.
  */
 app.use((req, res, next) => {
+  stripUntrustedForwardedHeaders(req);
+
   angularApp
     .handle(req)
     .then((response) =>
